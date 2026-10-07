@@ -1,210 +1,250 @@
-# DynamicIsland 設計書(初版)
+# DynamicIsland 設計書(第2版)
 
 - 日付: 2026-10-07
 - 状態: ドラフト(レビュー待ち)
-- 仮称: DynamicIsland(リポジトリ名に合わせた仮名。公開前に命名を再検討)
+- 仮称: DynamicIsland(公開前に命名を再検討)
+- 改訂履歴
+  - 第1版: 汎用ノッチアプリ(AI 状況 + ポモドーロ/音楽/シェルフ/カレンダー)
+  - 第2版: **「毎日 AI を使う人」向けに特化**。汎用機能はプラグイン化して後回し。主対象をデスクトップ/ブラウザ/IDE に変更
 
-## 1. 目的とスコープ
+## 1. コンセプト
 
-MacBook のノッチを「ライブアクティビティ置き場」にする macOS アプリを OSS として作る。
-参考: [boring.notch](https://github.com/TheBoredTeam/boring.notch)(GPL-3.0)、Seam(商用、生産性特化)、[Vibe Island](https://github.com/vibeislandapp/vibe-island)(商用、AI エージェント特化)。
+> 複数の AI を並行して使う人のための、ノッチの「AI 管制塔」。
 
-差別化の軸: 「AI エージェントの稼働状況」と「生産性機能(集中・音楽・ファイル・予定)」を 1 つの OSS で統合すること。
+AI の生成・エージェント実行は数十秒〜数十分かかり、その間ユーザーは別のウィンドウ・別の Space で作業している。完了・承認待ち・エラーが埋もれることが日常的な損失になっている。ノッチは「どの Space・どのアプリを見ていても常に視界にある唯一の場所」なので、ここに AI の状態を集約する。
 
-### 確定した前提
+### 1.1 差別化
+
+| 競合 | 主な対象 | 本アプリとの違い |
+|---|---|---|
+| [Vibe Island](https://github.com/vibeislandapp/vibe-island)(商用) | CLI コーディングエージェント 25 種 | 本アプリはデスクトップ/ブラウザ/ローカル LLM/音声入力まで扱う。OSS |
+| [CodeIsland](https://github.com/wxtsky/CodeIsland) | CLI/IDE エージェント | 要調査(ライセンス・機能範囲) |
+| [boring.notch](https://github.com/TheBoredTeam/boring.notch)(OSS) | 音楽・汎用 | AI 監視は未実装([要望 #951](https://github.com/TheBoredTeam/boring.notch/issues/951)) |
+| Seam / NotchNook / Alcove(商用) | 生産性・汎用 | AI 特化ではない |
+
+空いている領域として **ローカル LLM・デスクトップ/ブラウザの AI アプリ・音声入力** を主戦場にする。
+
+### 1.2 確定した前提
 
 | 項目 | 決定 |
 |---|---|
 | 公開形態 | OSS(GitHub) |
-| 実装方針 | ゼロから SwiftUI + AppKit(boring.notch のコードは流用しない → ライセンスを自由に選べる) |
-| 開発環境 | ノッチ付き Mac + Xcode(ビルド・実機確認は手元 Mac で実施) |
-| 進め方 | 土台 → AI 稼働状況 → 他機能の順 |
-| AI 対象 | まずは hook 機構を持つエージェントのみ。ChatGPT / Grok 等のチャットアプリは後回し |
+| 実装方針 | ゼロから SwiftUI + AppKit(boring.notch のコードは流用しない) |
+| 開発環境 | ノッチ付き Mac + Xcode(ビルド・実機確認は手元 Mac) |
+| 主な利用シーン(優先順) | 1. デスクトップ/ブラウザの AI(ChatGPT / Claude / Gemini / Grok 等) 2. IDE(Antigravity / Cursor 等) 3. ローカル LLM 4. CLI エージェント |
+| 汎用機能 | ポモドーロ・音楽・カレンダーは本体から外し、拡張システム完成後にプラグインとして提供 |
 
-### MVP 機能一覧
+## 2. 機能一覧
 
-1. 土台: ノッチ形状のウィンドウ、ホバー/クリックで展開、モジュール切替
-2. AI 稼働状況: 状態表示、ノッチからの承認操作(Allow/Deny)、使用量/レート制限、ターミナルへジャンプ
-3. 集中 / ポモドーロ
-4. 音楽コントロール
-5. ファイルシェルフ + AirDrop 送信
-6. カレンダー / 会議通知
+### 2.1 採用(本体)
 
-## 2. 全体アーキテクチャ
+| # | 機能 | 概要 |
+|---|---|---|
+| F1 | AI 稼働状況 | 生成中 / 完了 / 入力待ち / 承認待ち / エラーをノッチに表示。複数セッションを一覧 |
+| F2 | ノッチから承認 | 承認要求に Allow / Deny で応答(hook が対応する AI のみ) |
+| F3 | 元の画面へジャンプ | クリックで該当のブラウザタブ / アプリ / IDE / ターミナルを前面化 |
+| F4 | 使用量 / レート制限 | 取得可能な AI のみ。推定値は「推定」と明示 |
+| F5 | ローカル LLM 監視 | Ollama / LM Studio のロード中モデル、メモリ使用量、アンロードまでの時間、手動アンロード、メモリ逼迫警告 |
+| F6 | 音声プロンプト | ノッチで録音 → オンデバイス文字起こし → 前面の AI 入力欄へ挿入 |
+| F7 | AI アプリの通知集約 | AI 系アプリの通知だけをノッチに集約(オプトイン) |
+| F8 | Space 表示 | 現在の Space と、各 AI セッションがどの Space にあるかを表示 |
+
+### 2.2 候補(未採用・バックログ)
+
+| 機能 | 概要 |
+|---|---|
+| 長時間コマンド監視 | `islandctl run -- <cmd>` で任意ジョブの進行・完了を表示 |
+| コンテキスト置き場 | ファイル / スクショを溜めてプロンプトに投入、AirDrop 送信 |
+| AI 障害情報 | 各社ステータスページの障害を表示 |
+| 汎用プラグイン | ポモドーロ、音楽、カレンダー、天気 等 |
+
+## 3. 全体アーキテクチャ
 
 ```
-┌──────────────────────── DynamicIsland.app ────────────────────────┐
-│  NotchWindowController (NSPanel, borderless, non-activating)       │
-│     └─ NotchRootView (SwiftUI)                                     │
-│          ├─ CompactView   … ノッチ左右の小表示(最優先の1件)        │
-│          └─ ExpandedView  … タブ: AI / Focus / Music / Shelf / Cal │
-│                                                                    │
-│  ActivityArbiter  … 各モジュールの「今見せたい物」を優先度で選ぶ    │
-│                                                                    │
-│  Modules (IslandModule プロトコル)                                 │
-│   ├─ AgentModule     ← AgentHub ← IPCServer (Unix socket)          │
-│   ├─ FocusModule                                                   │
-│   ├─ MusicModule     ← NowPlayingProvider                          │
-│   ├─ ShelfModule     ← NSSharingService(.sendViaAirDrop)           │
-│   └─ CalendarModule  ← EventKit                                    │
-└────────────────────────────────────────────────────────────────────┘
+┌──────────────────────── DynamicIsland.app ─────────────────────────┐
+│  NotchWindowController (NSPanel)                                    │
+│     └─ NotchRootView (SwiftUI): Compact / Expanded                  │
+│  ActivityArbiter … 「今ノッチに出す 1 件」を優先度で決定             │
+│                                                                     │
+│  AgentHub ── 全ソースのセッション状態を統合                          │
+│     ▲ IPCServer (Unix socket)         ▲ AXWatcher (アクセシビリティ) │
+│     │                                 ▲ NotificationReader (任意)   │
+│  LocalLLMMonitor (Ollama / LM Studio の HTTP API をポーリング)       │
+│  VoicePrompt (録音 → 文字起こし → 挿入)                              │
+│  SpaceTracker (Space 番号・ウィンドウ所属)                           │
+└─────────────────────────────────────────────────────────────────────┘
         ▲ JSON over Unix domain socket
-        │
-  islandctl (同梱 CLI)  ← 各 AI の hook から呼ばれる薄いアダプタ
+  islandctl ── ① IDE / CLI の hook から呼ばれる
+            └─ ② ブラウザ拡張の Native Messaging Host を兼ねる
         ▲
-  Claude Code hooks / Codex notify / OpenClaw hooks / Hermes hooks
+  Cursor / Antigravity hooks、Claude Code / Codex 等の hooks、ブラウザ拡張
 ```
 
-### 2.1 ターゲット構成
+### 3.1 ターゲット構成
 
 | ターゲット | 種別 | 役割 |
 |---|---|---|
-| `IslandCore` | Swift Package | プロトコル定義、セッション状態機械、ポモドーロ計時、優先度判定。UI/AppKit 非依存でユニットテストする |
-| `DynamicIsland` | macOS App | ウィンドウ、SwiftUI、各モジュールの OS 連携 |
-| `islandctl` | CLI | hook から呼ばれ、ソケットへイベント送信。承認要求時は応答を待って hook に返す |
+| `IslandCore` | Swift Package | プロトコル、セッション状態機械、Arbiter、パーサ類。AppKit 非依存でユニットテスト |
+| `DynamicIsland` | macOS App | ウィンドウ、UI、OS 連携(AX、音声、Space 等) |
+| `islandctl` | CLI | hook アダプタ兼 Native Messaging Host |
+| `extension-chromium` | ブラウザ拡張(MV3) | Chrome / Arc / Brave / Edge 共通 |
+| `extension-safari` | Safari Web Extension | アプリに同梱(Phase 2 後半) |
 
-`IslandCore` を AppKit から切り離しておくのは、ロジックのテストを速く回すためと、CI(GitHub Actions の macOS ランナー)で UI なしに検証するため。
+## 4. 土台(ノッチウィンドウ)と品質要件
 
-### 2.2 ノッチウィンドウ(土台)
+### 4.1 実装
 
-- `NSPanel`(`.borderless`, `.nonactivatingPanel`)、`level` はメニューバーより上、`collectionBehavior` に `.canJoinAllSpaces`, `.fullScreenAuxiliary`, `.stationary`。
-- ノッチ寸法は `NSScreen.safeAreaInsets.top` と `auxiliaryTopLeftArea` / `auxiliaryTopRightArea` から算出。ノッチ無しディスプレイでは疑似ノッチ(上部中央の黒い角丸)を描く。
-- 状態は `closed`(ノッチと同化)/ `compact`(左右に小表示)/ `expanded`(下に展開)の 3 状態。ホバーで展開、外れたら一定時間後に閉じる。
-- 閉状態ではクリック透過(`ignoresMouseEvents` を状態で切替)して、メニューバー操作を妨げない。
-- ディスプレイ構成変更(`NSApplication.didChangeScreenParametersNotification`)で再配置。
+- `NSPanel`(`.borderless`, `.nonactivatingPanel`)、メニューバーより上のレベル、`.canJoinAllSpaces` / `.fullScreenAuxiliary` / `.stationary`。
+- ノッチ寸法は `NSScreen.safeAreaInsets.top` と `auxiliaryTopLeftArea` / `auxiliaryTopRightArea` から算出。ノッチ無しディスプレイは疑似ノッチ。
+- 状態は `closed` / `compact` / `expanded` の 3 つ。閉状態はクリック透過。
 - ログイン時起動は `SMAppService.mainApp`。
 
-### 2.3 ActivityArbiter(何をノッチに出すか)
+### 4.2 品質要件(boring.notch の不具合報告から抽出)
 
-compact 表示は 1 件だけなので、モジュール横断で優先度を決める。
+| 要件 | 根拠 |
+|---|---|
+| スリープ復帰・ディスプレイ構成変更時にウィンドウを再生成/再配置し、消えない・ずれない | [#336](https://github.com/TheBoredTeam/boring.notch/issues/336) 👍44、[#352](https://github.com/TheBoredTeam/boring.notch/issues/352) 👍11 |
+| 開閉アニメーションを滑らかにし、オフにもできる | [#341](https://github.com/TheBoredTeam/boring.notch/issues/341)、[#303](https://github.com/TheBoredTeam/boring.notch/issues/303) |
+| フルスクリーン時・外部ディスプレイでの表示可否、アプリ単位の除外を設定可能 | [#119](https://github.com/TheBoredTeam/boring.notch/issues/119)、[#239](https://github.com/TheBoredTeam/boring.notch/issues/239)、[#110](https://github.com/TheBoredTeam/boring.notch/issues/110) |
+| ノッチ展開時の幅・高さを調整可能 | [#300](https://github.com/TheBoredTeam/boring.notch/issues/300) |
+| 非公開 API 依存機能は OS 更新で壊れても本体が落ちない(機能単位で無効化) | [#417](https://github.com/TheBoredTeam/boring.notch/issues/417) 👍58 |
+
+### 4.3 ActivityArbiter の優先度
 
 | 優先度 | 内容 |
 |---|---|
-| 1 | AI の承認要求(操作が必要) |
-| 2 | AI の入力待ち / エラー |
-| 3 | 会議開始直前アラート |
-| 4 | AI 完了(数秒だけ表示して消える) |
-| 5 | ポモドーロ進行中 |
-| 6 | 音楽再生中 |
+| 1 | 承認待ち(操作が必要) |
+| 2 | 入力待ち / エラー |
+| 3 | 録音中(音声プロンプト) |
+| 4 | メモリ逼迫警告(ローカル LLM) |
+| 5 | 完了(数秒表示して消える) |
+| 6 | 生成中(複数ある場合は件数表示) |
 
-この判定は `IslandCore` に純粋関数として置き、テストで担保する。
+## 5. AI 稼働状況(F1〜F4)
 
-## 3. AI 稼働状況(Phase 1〜2 の中心)
+### 5.1 共通イベントプロトコル v1
 
-### 3.1 方針
-
-AI ごとにアプリ本体を改造するのではなく、**ローカルの共通イベント受け口**を定義し、各 AI の hook 機構からそこへ送る。アダプタは数行のスクリプト/設定で済むため、OSS としてコミュニティが対応 AI を増やしやすい。
-
-### 3.2 IPC 方式の比較
-
-| 案 | 長所 | 短所 | 判断 |
-|---|---|---|---|
-| A. Unix ドメインソケット + `islandctl` | ポート衝突なし、ファイル権限 0600 と peer UID 検証で他ユーザー/ブラウザから叩けない、双方向(承認応答)が自然 | curl で直接叩けない(CLI 経由) | **採用** |
-| B. localhost HTTP | curl で試せる | ブラウザからの localhost POST 等への対策(トークン)が必要、ポート管理 | 将来の追加口として検討 |
-| C. ファイル監視 | 最も単純 | 承認の往復ができない | 不採用 |
-
-ソケットパス: `~/Library/Application Support/DynamicIsland/island.sock`(権限 0600、接続時に `getpeereid` で同一 UID を確認)。
-
-### 3.3 イベントプロトコル(v1、改行区切り JSON)
+全ソースは最終的にこの形に正規化して `AgentHub` に入る。外部からは Unix ソケット(`~/Library/Application Support/DynamicIsland/island.sock`、権限 0600、`getpeereid` で同一 UID を確認)に改行区切り JSON で送る。
 
 ```json
 {
   "v": 1,
-  "source": "claude-code",
+  "source": "cursor | antigravity | chatgpt-web | claude-desktop | claude-code | ...",
   "session_id": "abc123",
   "event": "running | waiting_input | permission_request | done | error | ended",
-  "title": "my-project",
+  "title": "my-project / 会話タイトル",
   "detail": "Bash: npm test",
-  "cwd": "/Users/me/my-project",
-  "terminal": { "app": "iTerm2", "session_id": "w0t1p0", "tty": "/dev/ttys003" },
-  "request_id": "uuid (permission_request のときのみ)"
+  "origin": {
+    "kind": "browser | app | ide | terminal",
+    "bundle_id": "com.google.Chrome",
+    "tab_id": 123,
+    "tty": "/dev/ttys003"
+  },
+  "request_id": "uuid (permission_request のみ)"
 }
 ```
 
-承認応答(アプリ → `islandctl`):
+承認応答: `{ "v": 1, "request_id": "uuid", "decision": "allow | deny | ask" }`
 
-```json
-{ "v": 1, "request_id": "uuid", "decision": "allow | deny | ask" }
-```
+**安全原則**: アプリ未起動・タイムアウト・不正応答は必ず `ask`(= 各 AI の通常の確認画面)に倒す。自動 allow の経路は作らない。
 
-安全側の原則: アプリ未起動・タイムアウト・不正応答のときは必ず `ask`(= 通常どおりターミナルで確認)に倒す。**自動で allow になる経路を作らない。**
+**プライバシー原則**: 既定では会話本文・プロンプト本文を送らない。送るのは状態・タイトル・短い detail のみ。本文の表示はソースごとのオプトイン。
 
-### 3.4 対応 AI と取得手段
+### 5.2 ソース別の取得手段
 
-| 対象 | 手段 | 取れる状態 | 承認操作 | 優先度 |
-|---|---|---|---|---|
-| Claude Code | 公式 hooks(SessionStart / UserPromptSubmit / PreToolUse・PermissionRequest / Notification / Stop / SessionEnd) | 実行中・入力待ち・承認要求・完了 | 可能(hook の JSON 出力で allow/deny を返す) | Phase 1 |
-| Codex CLI | `~/.codex/config.toml` の `notify` | 完了のみ(`agent-turn-complete`) | 不可(承認要求は notify 対象外) | Phase 1 |
-| OpenClaw | Gateway hooks([docs](https://docs.openclaw.ai/automation/hooks)) | セッション/エージェントのイベント | 要調査 | Phase 2 |
-| Hermes Agent | Gateway / Plugin hooks([docs](https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks)) | タスク完了・失敗等 | 要調査 | Phase 2 |
-| Antigravity | 公式のローカル hook は未確認 | 不明 | 不明 | Phase 2 で調査 |
-| ChatGPT / Grok | hook 無し(ブラウザ拡張 or アクセシビリティ API が必要) | — | — | MVP 外 |
+| 優先 | 対象 | 手段 | 取れる状態 | 承認 | 確度 |
+|---|---|---|---|---|---|
+| 1 | ブラウザの ChatGPT / Claude / Gemini / Grok | ブラウザ拡張が DOM を監視(停止ボタンの有無等)→ Native Messaging で `islandctl` → ソケット | 生成中 / 完了 / エラー | 不可 | 中(サイト改修で壊れる → セレクタを拡張内の設定に分離し、更新を容易にする) |
+| 1 | デスクトップの ChatGPT / Claude 等 | アクセシビリティ API(`AXObserver`)で UI 要素を監視 + 任意で通知 DB(F7) | 生成中 / 完了 | 不可 | 低〜中(アプリ更新で壊れる。アクセシビリティ権限が必要) |
+| 2 | Cursor | 公式 hooks([docs](https://cursor.com/docs/hooks))。`beforeShellExecution` は allow/deny を返せる | 実行中 / 完了 / 承認待ち | 可(シェル実行) | 中(フォーラムで hook 不発の報告あり) |
+| 2 | Antigravity | 公式 hooks([docs](https://antigravity.google/docs/hooks/))。PreToolUse / PostToolUse / PostInvocation / Stop | 実行中 / 完了 | 要確認 | 中(Stop が発火しない報告あり → PostInvocation + タイムアウトで完了推定) |
+| 4 | Claude Code / Codex / OpenClaw / Hermes | 各公式 hook(第1版の調査どおり) | 状態一式(Codex は完了のみ) | Claude Code は可 | 高〜中 |
+| — | 使用量(F4) | CLI のローカルログ等から。Web/デスクトップのチャット利用量は取得手段なし | — | — | 要調査 |
 
-※ Claude Code の各 hook のペイロード・タイムアウト既定値・承認の返し方は、実装着手時に公式ドキュメントで最新仕様を確認する(仕様変更が頻繁なため、本書では確定させない)。
+※ 各 hook のペイロードと戻り値の仕様は変更が多いため、実装着手時に公式ドキュメントで確認する。
 
-### 3.5 アダプタ導入
+### 5.3 ジャンプ(F3)
 
-- アプリの設定画面に「Claude Code に接続」等のボタンを置き、ユーザー確認の上で各 AI の設定ファイルへ hook を追記する。
-- 追記前に必ずバックアップを取り、差分を見せ、取り消しボタンを用意する(他人の設定ファイルを書き換えるため)。
-- 手動導入手順も README に載せる。
+| origin | 方法 |
+|---|---|
+| browser | 拡張に `tabs.update` / `windows.update` を依頼して該当タブを前面化 |
+| app / ide | `NSRunningApplication.activate`。IDE はワークスペースのウィンドウを AX で特定 |
+| terminal | iTerm2 / Terminal.app は AppleScript、その他はアプリ前面化のみ |
 
-### 3.6 ターミナルへジャンプ
+## 6. ローカル LLM 監視(F5)
 
-- hook 実行時の環境変数(`TERM_PROGRAM`, `ITERM_SESSION_ID`, TTY 等)を `terminal` に詰めて送る。
-- iTerm2 / Terminal.app は AppleScript で該当タブを前面化。その他(Ghostty, WezTerm, VS Code 等)はまずアプリを前面化するだけにし、個別対応は後追い。
-- AppleScript には「オートメーション」権限が必要。
+| 項目 | 手段 |
+|---|---|
+| Ollama のロード中モデル、使用メモリ、アンロード予定時刻 | `GET http://localhost:11434/api/ps`(`size`, `size_vram`, `expires_at`, `context_length` 等。[公式](https://docs.ollama.com/api/ps.md)) |
+| Ollama の手動アンロード | `keep_alive: 0` を指定したリクエスト(実装時に仕様確認) |
+| LM Studio | ローカル REST API(エンドポイント・フィールドは要調査) |
+| メモリ逼迫警告 | `DispatchSource.makeMemoryPressureSource` + システムのメモリ統計。ユニファイドメモリのため、大きいモデルのロード時に警告 |
 
-### 3.7 使用量 / レート制限
+設計方針: 各ランタイムを `LocalLLMProvider` プロトコルで抽象化し、llama.cpp server 等を後から追加できるようにする。ポーリング間隔は、ロード中モデルがある時は短く、無い時は長くする。
 
-- 各 CLI がローカルに残すセッションログや statusline 入力から推定する方式が有力だが、**取得元とフォーマットは CLI のバージョンで変わるため未確定**。Phase 2 で調査してから設計する。
-- 公式に取得できない値を推測で表示する場合は、UI 上で「推定」と明示する。
+## 7. 音声プロンプト(F6)
 
-## 4. 生産性機能(Phase 3 以降、概要のみ)
+1. グローバルホットキー(押している間録音)またはノッチのボタンで録音開始。録音中はノッチに波形。
+2. オンデバイスで文字起こし。候補は WhisperKit(MIT、日本語精度が高い)と Apple の音声認識フレームワーク。macOS 26 の新 API の要件・精度は要確認。
+3. 結果を前面アプリのフォーカス中の入力欄に挿入(ペーストボード経由 + キー入力合成。アクセシビリティ権限が必要)。挿入前に元のペーストボード内容を退避・復元。
+4. 拡張: ローカル LLM でフィラー除去・整形してから挿入(F5 と連携、任意)。
 
-| 機能 | 実装方針 | 注意点 |
-|---|---|---|
-| 集中 / ポモドーロ | 計時ロジックは `IslandCore`。compact 表示に残り時間リング。終了時に通知 | macOS の集中モードを直接切り替える公開 API は無い。ショートカット(`shortcuts run`)連携で代替 |
-| 音楽 | まず公開手段(Music.app / Spotify の AppleScript)。全アプリ対応は MediaRemote 系(非公開 API) | MediaRemote は macOS 15.4 で制限強化。非公開 API 依存は OS 更新で壊れるリスクがあるので任意機能にする |
-| ファイルシェルフ | ノッチへドラッグ&ドロップで一時保持(ブックマーク保存) | 元ファイル移動時の扱いを決める |
-| AirDrop | `NSSharingService(named: .sendViaAirDrop)`(公開 API) | 送信 UI は OS 標準のシートになる |
-| カレンダー | EventKit で直近予定、開始 N 分前に compact へ | カレンダーアクセス許可が必要 |
+## 8. 通知集約(F7)
 
-## 5. 配布・権限・ライセンス
+- 他アプリの通知を読む公開 API は無い。macOS 15 以降、通知 DB は `~/Library/Group Containers/group.com.apple.usernoted/` に移り、読むにはフルディスクアクセスが必要([参考](https://mjtsai.com/blog/2024/07/15/sequoia-finally-addresses-notification-center-privacy))。
+- 方針: **オプトイン機能**とし、AI 系アプリ(バンドル ID の許可リスト)の通知のみ読み取り専用で扱う。DB 形式は非公開のため、読めない場合は機能を自動無効化して本体に影響させない。
+- 用途: デスクトップ AI アプリの「応答完了」通知を、F1 の完了検知の補助としても使う。
 
-- **App Sandbox は使わない**(Unix ソケット、他アプリの AppleScript 操作、他ツールの設定ファイル編集が必要なため)→ Mac App Store 配布は対象外。
-- 配布は GitHub Releases + Homebrew cask を想定。Gatekeeper 警告なしで配るには Apple Developer Program(有料)での署名・公証が必要。未加入の間は「右クリック → 開く」手順を README に明記。
-- ライセンス: ゼロから書くので選択可能。候補は MIT(採用されやすい)か GPL-3.0(派生物も OSS を強制)。**要決定**。MediaRemote 系ライブラリを取り込む場合はそのライセンスとの整合を確認する。
-- 必要な権限: カレンダー、オートメーション(AppleScript)、通知。アクセシビリティは現時点で不要の見込み。
+## 9. Space 表示(F8)
 
-## 6. フェーズ計画
+- Space 番号・ウィンドウの所属 Space を取得する公開 API は無い。yabai 等と同じく非公開の CoreGraphics(CGS)系 API を使う。
+- 非公開 API のため、取得失敗時は表示を隠すだけにする(4.2 の品質要件)。
+- 用途: 「Space 3 の Cursor が承認待ち」のように、AI セッションの所在を示す。ジャンプ(F3)時は該当 Space へ切り替わる。
+
+## 10. 拡張(プラグイン)システム
+
+- 汎用機能(ポモドーロ・音楽・カレンダー等)と、AI ソースのアダプタを本体外に出すための仕組み。
+- 第一段階は「外部プロセスがソケットにイベントを送るだけ」の疎結合方式(= 5.1 のプロトコルをそのまま使う)。UI を伴うプラグイン(独自ビュー)は第二段階で設計する。
+
+## 11. 配布・権限・ライセンス
+
+- App Sandbox は使わない(ソケット、AX、AppleScript、他ツールの設定編集のため)→ Mac App Store 対象外。GitHub Releases + Homebrew cask。
+- Gatekeeper 警告なしの配布には Apple Developer Program(有料)での署名・公証が必要。
+- 必要な権限: アクセシビリティ(F1 デスクトップ監視・F6 挿入)、マイク(F6)、フルディスクアクセス(F7、任意)、オートメーション(F3 ターミナル)。**権限は機能を有効化した時点で個別に要求**し、初回起動で一括要求しない。
+
+## 12. フェーズ計画
 
 | Phase | 内容 | 完了条件 |
 |---|---|---|
-| 0 | 土台: プロジェクト作成、ノッチウィンドウ、3 状態遷移、モジュール枠、設定画面、ログイン時起動 | 実機ノッチ上で展開/収納が動く |
-| 1 | AI 基盤: `IslandCore` のプロトコル + 状態機械、IPC サーバ、`islandctl`、Claude Code アダプタ(状態・承認・ジャンプ)、Codex アダプタ(完了通知) | Claude Code の承認をノッチから Allow/Deny できる |
-| 2 | AI 拡張: OpenClaw / Hermes アダプタ、使用量表示、Antigravity 調査 | 4 種以上の AI が同一パネルに並ぶ |
-| 3 | 集中 / ポモドーロ | |
-| 4 | 音楽 | |
-| 5 | ファイルシェルフ + AirDrop | |
-| 6 | カレンダー / 会議通知 | |
-| 7 | 配布: 署名・公証、Homebrew、README | |
+| 0 | 土台 + 4.2 品質要件 | 実機でスリープ復帰・外部ディスプレイ・フルスクリーンでも正しく動く |
+| 1 | AI 基盤(`IslandCore` プロトコル/状態機械、IPC、`islandctl`)+ IDE アダプタ(Cursor / Antigravity) | IDE のエージェント完了がノッチに出て、クリックで戻れる |
+| 2 | ブラウザ拡張(Chromium → Safari)。ChatGPT / Claude / Gemini / Grok | ブラウザで生成完了がノッチに出て、タブへ戻れる |
+| 3 | デスクトップアプリ監視(AX)+ 通知集約(F7) | ChatGPT / Claude デスクトップの完了を検知 |
+| 4 | ローカル LLM 監視(F5) | Ollama のモデル状態表示とアンロード |
+| 5 | 音声プロンプト(F6) | 日本語の音声が前面の AI 入力欄に入る |
+| 6 | CLI エージェント + 承認(F2)+ 使用量(F4) | Claude Code の承認をノッチから操作 |
+| 7 | Space 表示(F8) | |
+| 8 | 拡張システム + 汎用プラグイン | |
+| 9 | 配布(署名・公証、Homebrew、README) | |
 
-## 7. テスト方針
+## 13. テスト方針
 
-- `IslandCore`: プロトコルのエンコード/デコード、セッション状態遷移、Arbiter の優先度、ポモドーロ計時をユニットテスト(`swift test`)。
-- IPC: 実ソケットを使った結合テスト(承認タイムアウト時に `ask` へ倒れることを必ず検証)。
-- UI: 実機での目視確認チェックリスト(ノッチ有/無、外部ディスプレイ、フルスクリーン、Space 切替)。
+- `IslandCore`: プロトコル、状態遷移、Arbiter、各ソースのイベント正規化をユニットテスト。
+- IPC: 実ソケット結合テスト(承認タイムアウトで `ask` に倒れることを必須で検証)。
+- ブラウザ拡張: 各サイトの DOM スナップショットに対するセレクタのテスト(サイト改修の検知用)。
+- UI: 実機チェックリスト(ノッチ有/無、外部ディスプレイ、フルスクリーン、Space 切替、スリープ復帰)。
 - CI: GitHub Actions の macOS ランナーで `swift test` と `xcodebuild build`。
 
-## 8. リスクと未決事項
+## 14. リスクと未決事項
 
 | # | 内容 | 対応 |
 |---|---|---|
-| R1 | 競合 Vibe Island(25 種の AI 対応・承認操作あり)と機能が重なる | 「生産性機能との統合」と「OSS・共通プロトコル」で差別化。先に既存 OSS 実装(open-vibe-island 等)の有無・内容を確認する |
-| R2 | 各 AI の hook 仕様が頻繁に変わる | アダプタを本体から分離し、プロトコル v を明記 |
-| R3 | 承認操作のセキュリティ | ソケット権限 + UID 検証、失敗時は必ず `ask` |
-| R4 | MediaRemote 非公開 API | 任意機能化、公開手段を既定に |
-| R5 | 開発は手元 Mac 依存(クラウド環境は Linux で Swift 未導入) | ロジックは `IslandCore` に寄せ、CI の macOS ランナーで検証 |
+| R1 | ブラウザ/デスクトップ監視は DOM・UI 構造依存で壊れやすい(最優先領域が最も壊れやすい) | セレクタ/AX パスを設定データに分離、テストで検知、壊れたら該当ソースだけ無効化 |
+| R2 | 非公開 API・非公開 DB(Space、通知) | 機能単位で隔離、失敗時は非表示 |
+| R3 | 権限の多さが導入の障壁になる | 機能ごとの遅延要求、権限が必要な理由を UI で説明 |
+| R4 | 承認操作・ソケットのセキュリティ | 0600 + UID 検証、失敗時は `ask` |
+| R5 | 競合(Vibe Island、CodeIsland)との重複 | Phase 1 前に既存 OSS 実装を調査し、プロトコル互換や流用可否を判断 |
+| R6 | 開発は手元 Mac 依存(クラウド環境は Linux・Swift 未導入) | ロジックを `IslandCore` に寄せ CI で検証 |
 | Q1 | ライセンス(MIT / GPL-3.0) | 要決定 |
 | Q2 | アプリ名 | 要決定 |
-| Q3 | 最低対応 macOS(14 Sonoma 案) | 要決定 |
+| Q3 | 最低対応 macOS(14 Sonoma 案。音声認識の新 API を使うなら 26) | 要決定 |
